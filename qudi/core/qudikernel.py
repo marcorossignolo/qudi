@@ -166,6 +166,7 @@ if __name__ == '__main__':
             q.init_signal()
             q.init_poller()
             q.connect()
+            print('connection file:', sys.argv[1])
             q.start_kernel(sys.argv[1])
             atexit.register(q.stop_kernel)
             logging.info('Sleeping.')

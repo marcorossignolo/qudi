@@ -22,12 +22,14 @@ top-level directory of this distribution and at <https://github.com/Ulm-IQO/qudi
 import weakref
 import logging
 import numpy as np
+import IPython
 
 from PySide2 import QtCore
 
 from qudi.util.mutex import RecursiveMutex
 from qudi.util.network import netobtain
 
+from traitlets.config import Config
 from qudi.core.jupyterkernel.qzmqkernel import QZMQKernel
 
 
@@ -110,7 +112,34 @@ class JupyterKernelManager(QtCore.QObject):
                 return
             config = netobtain(config)
             self.log.debug('Starting new kernel with config: {0}'.format(config))
-            kernel = QZMQKernel(config)
+
+            # First create a config object from the traitlets library
+            c = Config()
+
+            # Now we can set options as we would in a config file:
+            #   c.Class.config_value = value
+
+            c.ConnectionFileMixin.control_port = config.get('control_port', 0)
+            c.ConnectionFileMixin.hb_port = config.get('hb_port', 0)
+            c.ConnectionFileMixin.shell_port = config.get('shell_port', 0)
+            c.ConnectionFileMixin.iopub_port = config.get('iopub_port', 0)
+            c.ConnectionFileMixin.stdin_port = config.get('stdin_port', 0)
+            c.ConnectionFileMixin.transport = config.get('transport', 'tcp')
+            c.Session.key = config.get('stdin_port', 0)
+            c.Session.signature_scheme = config.get('signature_scheme', 0)
+
+            # c.InteractiveShellApp.exec_lines = [
+            #     'print("importing numpy")',
+            #     'import numpy as np',
+            # ]
+            # c.InteractiveShell.colors = 'LightBG'
+            # c.InteractiveShell.confirm_exit = False
+            # c.TerminalIPythonApp.display_banner = False
+
+            kernel = IPython.embed_kernel(config=c)
+            print('IPython kernel', kernel.engine_id, kernel)
+            return kernel.engine_id
+            # kernel = QZMQKernel(config)
             if kernel.engine_id in self.kernels:
                 self.log.error('Kernel with ID {0} already created in QudiKernelLogic. '
                                'Ignoring call to start_kernel.')

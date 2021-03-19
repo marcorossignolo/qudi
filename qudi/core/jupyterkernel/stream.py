@@ -29,7 +29,7 @@ from io import StringIO
 import threading
 from threading import Thread, Lock, Event
 import time
-from qudi.util.mutex import Mutex
+from qudi.util.mutex import RecursiveMutex
 
 
 class QZMQStream(QtCore.QObject):
@@ -38,71 +38,51 @@ class QZMQStream(QtCore.QObject):
     """
     sigMsgRecvd = QtCore.Signal(object)
 
-    def __init__(self, zmqsocket):
+    def __init__(self, zmqsocket, *args, **kwargs):
         """ Make a stream from a socket.
 
         @param zmqsocket: ZMQ socket
         """
-        super().__init__()
-        self.name = None
+        super().__init__(*args, **kwargs)
         self.socket = zmqsocket
-        self.readnotifier = QtCore.QSocketNotifier(
-            self.socket.get(zmq.FD),
-            QtCore.QSocketNotifier.Read)
-        logging.debug(
-            "Notifier: {0!s} at filenumber {1!s} with socket {2!s} of class {3!s}".format(self.readnotifier.socket(),
-                                                                                          self.socket.get(zmq.FD),
-                                                                                          self.socket,
-                                                                                          self.name))
-        self.readnotifier.activated.connect(self.checkForMessage)
+        self._running = True
+        threading.Thread(target=self._execute, daemon=True).start()
 
-    def checkForMessage(self, socket):
-        """ Check on socket activity if there is a complete ZMQ message.
-
-          @param socket: ZMQ socket
-        """
-        logging.debug("Check: {0!s}".format(self.readnotifier.socket()))
-        self.readnotifier.setEnabled(False)
-        check = True
-        try:
-            while check:
-                events = self.socket.get(zmq.EVENTS)
-                check = events & zmq.POLLIN
-                logging.debug("EVENTS: {0!s}".format(events))
-                if check:
-                    try:
-                        msg = self.socket.recv_multipart(zmq.NOBLOCK)
-                    except zmq.ZMQError as e:
-                        if e.errno == zmq.EAGAIN:
-                            logging.debug("state changed since poll event")
-                            # state changed since poll event
-                            pass
-                        else:
-                            logging.info("RECV Error: {0!s}".format(zmq.strerror(e.errno)))
+    def _execute(self):
+        while self._running:
+            events = self.socket.get(zmq.EVENTS)
+            check = events & zmq.POLLIN
+            if check:
+                try:
+                    msg = self.socket.recv_multipart(zmq.NOBLOCK)
+                except zmq.ZMQError as e:
+                    if e.errno == zmq.EAGAIN:
+                        logging.debug("state changed since poll event")
+                        # state changed since poll event
                     else:
-                        logging.debug("MSG: {0!s} {1!s}".format(self.readnotifier.socket(), msg))
-                        self.sigMsgRecvd.emit(msg)
-        except:
-            logging.debug("Exception in QZMQStream::checkForMessages")
-            pass
-        else:
-            self.readnotifier.setEnabled(True)
+                        logging.info("RECV Error: {0!s}".format(zmq.strerror(e.errno)))
+                    continue
+                self.sigMsgRecvd.emit(msg)
+                print(self.name, msg)
+            time.sleep(0.1)
+        print('end execute', self.socket)
 
     def close(self):
         """ Remove all notifiers from socket.
         """
-        self.readnotifier.setEnabled(False)
-        self.readnotifier.activated.disconnect()
+        self._running = False
         self.sigMsgRecvd.disconnect()
 
 
 class QZMQHeartbeat(QtCore.QObject):
     """ Echo Messages on a ZMQ stream. """
 
-    def __init__(self, stream):
-        super().__init__()
+    def __init__(self, stream, *args, **kwargs):
+        print('hb init', threading.current_thread())
+        super().__init__(*args, **kwargs)
         self.stream = stream
         self.stream.sigMsgRecvd.connect(self.beat)
+        print('hb connected')
 
     @QtCore.Slot(bytes)
     def beat(self, msg):
@@ -110,6 +90,7 @@ class QZMQHeartbeat(QtCore.QObject):
 
           @param msg: message to be sent back
         """
+        print('heart beat')
         logging.debug("HB: {}".format(msg))
         if len(msg) > 0:
             retmsg = msg[0]
@@ -124,6 +105,7 @@ class NetworkStream(QZMQStream):
 
     def __init__(self, context, zqm_type, connection, auth, engine_id, name=None, port=0):
         self.name = name if name is not None else self.msg_id()
+        print('open network stream:', context, self.name)
         self._socket = context.socket(zqm_type)
         self._port = self.bind(self._socket, connection, port)
         super().__init__(self._socket)
@@ -133,7 +115,7 @@ class NetworkStream(QZMQStream):
 
         self.DELIM = b"<IDS|MSG>"
         self._parent_header = dict()
-        self._threadlock = Mutex()
+        self._threadlock = RecursiveMutex()
 
     def close(self):
         super().close()
@@ -218,6 +200,7 @@ class NetworkStream(QZMQStream):
                 parts = identities + parts
             logging.debug('{0!s} send parts: {1!s}'.format(self.name, parts))
             self.socket.send_multipart(parts)
+            print('send complete:', parts)
 
     def deserialize_wire_msg(self, wire_msg):
         """split the routing prefix and message frames from a message on the wire"""

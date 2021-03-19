@@ -170,6 +170,7 @@ class QZMQKernel(QtCore.QObject):
         self.heartbeat_handler = QZMQHeartbeat(self.heartbeat_stream)
         self.heartbeat_handler.moveToThread(self.hb_thread)
         self.hb_thread.start()
+        self.heartbeat_handler.start()
 
         self.init_exec_env()
         logging.info('{} ready! Listening...'.format(self.engine_id))
@@ -224,8 +225,8 @@ class QZMQKernel(QtCore.QObject):
     # Socket Handlers:
     def shell_handler(self, msg):
         logging.debug("shell received: %s" % msg)
-        position = 0
         identities, msg = self.shell_stream.deserialize_wire_msg(msg)
+        print(identities, msg)
 
         # process some of the possible requests:
         # execute_request, execute_reply, inspect_request, inspect_reply
